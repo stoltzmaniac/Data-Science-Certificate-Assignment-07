@@ -1,0 +1,202 @@
+---
+title: "In Class"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library('ggiraphExtra') # new package
+library('janitor')
+library('tidyverse')
+library('lubridate')
+library('modelr')
+```
+
+
+### Before getting started with multiple regression  
+
+We should look at one reason EDA is very important...
+```{r}
+data("anscombe")
+anscombe
+```
+
+
+# Don't worry about the code, look at the results
+```{r}
+##-- now some "magic" to do the 4 regressions in a loop:
+ff <- y ~ x
+mods <- setNames(as.list(1:4), paste0("lm", 1:4))
+for(i in 1:4) {
+  ff[2:3] <- lapply(paste0(c("y","x"), i), as.name)
+  ## or   ff[[2]] <- as.name(paste0("y", i))
+  ##      ff[[3]] <- as.name(paste0("x", i))
+  mods[[i]] <- lmi <- lm(ff, data = anscombe)
+  print(anova(lmi))
+}
+```
+
+
+## See how close they are (numerically!)
+```{r}
+sapply(mods, coef)
+lapply(mods, function(fm) coef(summary(fm)))
+```
+
+
+## Now, do what you should have done in the first place: PLOTS
+```{r}
+op <- par(mfrow = c(2, 2), mar = 0.1+c(4,4,1,1), oma =  c(0, 0, 2, 0))
+for(i in 1:4) {
+  ff[2:3] <- lapply(paste0(c("y","x"), i), as.name)
+  plot(ff, data = anscombe, col = "red", pch = 21, bg = "orange", cex = 1.2,
+       xlim = c(3, 19), ylim = c(3, 13))
+  abline(mods[[i]], col = "blue")
+}
+mtext("Anscombe's 4 Regression data sets", outer = TRUE, cex = 1.5)
+par(op)
+```
+
+... in short, make sure you visualize your data and know what is going on in it.
+
+
+```{r, message = FALSE}
+# Previous data cleaning methods from assignment-05
+raw_dat = read_csv('https://foco-ds-portal-files.s3.amazonaws.com/bike+data.csv')
+
+clean_dat = raw_dat %>%
+  clean_names() %>%
+  mutate(date = mdy(date)) %>%
+  mutate(tmp_diff = abs(temperature_f - temperature_feels_f),
+         tmp_feel_normal = if_else(tmp_diff < 25, temperature_feels_f, NA_real_)) %>%
+  mutate(temperature_feels_f = if_else(is.na(tmp_feel_normal), temperature_f, temperature_feels_f))
+
+head(clean_dat)
+```
+
+
+```{r}
+mod = lm(total_users ~ temperature_feels_f, data = clean_dat)
+summary(mod)
+```
+
+
+Plotting the model:
+```{r}
+plot_data = clean_dat %>% 
+  add_predictions(mod, "predicted_values")
+
+plot_data %>% select(temperature_feels_f, total_users, predicted_values)
+```
+
+
+```{r}
+plot_data %>%
+  ggplot(aes(x = temperature_feels_f)) + 
+    geom_point(aes(y = total_users)) + 
+    geom_line(aes(y = predicted_values), colour = "red", size = 1)
+```
+
+
+### Adding more variables  
+
+Adding `wind_speed` into your model because it seems like it could have an impact. This is "additive" which is different than "multiplicative". This basically says "independent" --- what does that mean?
+```{r}
+mod = lm(total_users ~ temperature_feels_f + wind_speed, data = clean_dat)
+
+plot_data = clean_dat %>%
+  add_predictions(mod, 'predicted_values')
+
+summary(mod)
+```
+
+Plot the data & predictions
+```{r}
+plot_data %>%
+  ggplot(aes(x = temperature_feels_f, y = total_users)) + 
+  geom_point() +
+  geom_line(aes(y = predicted_values), col = 'red', size = 2)
+```
+
+We are missing a variable... therefore, `ggPredict()` can help us out.
+```{r}
+ggPredict(mod)
+
+# This function has a lot of limitations... really only useful for 3 variables and any categorical must be binary.
+```
+
+
+### Interpretation  
+
+How do we talk about this model now that there are multiple terms? We can tell that all variables are statistically significant and that `temperature_feels_f` makes the most impact per unit change (highest absolute value for a slope coefficient). We notice something a bit weird... 
+
+Does the `wind_speed` coefficient make sense?
+
+
+### What happens when we want to use categorical variables?  
+
+Categorical variables are not continuous. 
+
+Let's try something like `holiday` where we only have 2 values (1 and 0)
+```{r}
+mod = lm(total_users ~ holiday, data = clean_dat)
+summary(mod)
+```
+
+Does this make a lot of sense?
+```{r}
+# I know we haven't used modelr, but we'll do it here just to visualize results
+clean_dat %>% 
+  add_predictions(mod, "predictions") %>%
+ggplot(aes(x = holiday)) + 
+  geom_point(aes(y = total_users)) + 
+  geom_line(aes(y = predictions), colour = "red", size = 1)
+```
+
+
+While the graph looks good, it does not represent reality... categorical variables should not be treated as continuous!
+
+This idea can extend beyond simple binary variables, for example, the `day_of_the_week` has numbers 0 thru 6 (representing Sunday to Saturday). These should also be looked at as categorical because an average does not make sense and any continuous operations are not reflective of the data. Can you imagine if you called them by name "Sunday", "Monday", ... , "Saturday" --- would it make sense to be averaging these? We should turn categorical variables into factors with `as.factor()`
+```{r}
+# We will call this new tibble reg_data, short for "regression_data"
+reg_data = clean_dat %>%
+  mutate(hour = as.factor(hour),
+         season = as.factor(season),
+         holiday = as.factor(holiday),
+         day_of_the_week = as.factor(day_of_the_week),
+         weather_type = as.factor(weather_type),
+         working_day = as.factor(working_day)) %>%
+  select(-tmp_feel_normal)
+
+head(reg_data)
+```
+
+Let's forget about imputing values at this point and look at a "multivariate" model (uses more than one variable). We will start with ALL variables.
+```{r}
+mod = lm(total_users ~ ., data = reg_data)
+summary(mod)
+```
+
+
+Whoa!?! So... what happened there? 
+
+How do we interpret that? 
+
+Also, we have a PERFECT fit (R^2 == 1) ... why is that?
+
+So what is R^2 (let's look at the slides <https://lagunita.stanford.edu/c4x/HumanitiesScience/StatLearning/asset/linear_regression.pdf>)
+
+Another interesting thing... now humidity is not statistically significant (as it was before). Why would we see this?
+
+
+How should we choose variables rather than simply adding ALL of them? There are a few different methods. Variable selection by hand is very important for small data sets, but isn't really possible if you had, let's say, 10,000 variables. Imagine the amount of data a company like Uber would have in order to model the number of rides in any given day (or could be hour, minute...etc.).
+
+
+What if variables are not independent of each other? For example, `temperature_f` and `temperature_feels_f` are almost identical and clearly have a very strong correlation. Highly correlated variables (also called covariation) means that data moves together, in this case, in a linear fashion. What should we do with highly correlated variables? Why can they create a problem?
+
+
+One important feature of linear regression is that we're considering all data to be "independent and identically distributed" (i.i.d.). What is this? 
+
+
+It means we are assuming that these things are not related to each other, why would this matter? How should we deal with this?
+
